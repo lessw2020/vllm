@@ -1,12 +1,12 @@
 # from VLLLM, modified by Adnan:
 cmake_minimum_required(VERSION 3.21)
 
-project(cutlass_extensions LANGUAGES CXX)
+project(vllm_extensions LANGUAGES CXX)
 
-option(CUTLASS_TARGET_DEVICE "Target device backend for vLLM" "cuda")
+option(VLLM_TARGET_DEVICE "Target device backend for vLLM" "cuda")
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "Target device: ${CUTLASS_TARGET_DEVICE}")
+message(STATUS "Target device: ${VLLM_TARGET_DEVICE}")
 
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
 
@@ -17,7 +17,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
 set(PYTHON_SUPPORTED_VERSIONS "3.9" "3.10" "3.11")
 
 # Supported NVIDIA architectures.
-set(CUDA_SUPPORTED_ARCHS "8.9;9.0")
+set(CUDA_SUPPORTED_ARCHS "8.0;8.6;8.9;9.0")
 
 #
 # Supported/expected torch versions for CUDA.
@@ -32,13 +32,13 @@ set(TORCH_SUPPORTED_VERSION_CUDA "2.3.0")
 
 #
 # Try to find python package with an executable that exactly matches
-# `CUTLASS_PYTHON_EXECUTABLE` and is one of the supported versions.
+# `VLLM_PYTHON_EXECUTABLE` and is one of the supported versions.
 #
-if (CUTLASS_PYTHON_EXECUTABLE)
-  find_python_from_executable(${CUTLASS_PYTHON_EXECUTABLE} "${PYTHON_SUPPORTED_VERSIONS}")
+if (VLLM_PYTHON_EXECUTABLE)
+  find_python_from_executable(${VLLM_PYTHON_EXECUTABLE} "${PYTHON_SUPPORTED_VERSIONS}")
 else()
   message(FATAL_ERROR
-    "Please set CUTLASS_PYTHON_EXECUTABLE to the path of the desired python version"
+    "Please set VLLM_PYTHON_EXECUTABLE to the path of the desired python version"
     " before running cmake configure.")
 endif()
 
@@ -64,11 +64,11 @@ find_package(Torch REQUIRED)
 #
 # Forward the non-CUDA device extensions to external CMake scripts.
 #
-if (NOT CUTLASS_TARGET_DEVICE STREQUAL "cuda")
-    if (CUTLASS_TARGET_DEVICE STREQUAL "cpu")
+if (NOT VLLM_TARGET_DEVICE STREQUAL "cuda")
+    if (VLLM_TARGET_DEVICE STREQUAL "cpu")
         include(${CMAKE_CURRENT_LIST_DIR}/cmake/cpu_extension.cmake)
     else()
-        message(FATAL_ERROR "Unsupported vLLM target device: ${CUTLASS_TARGET_DEVICE}")
+        message(FATAL_ERROR "Unsupported vLLM target device: ${VLLM_TARGET_DEVICE}")
     endif()
     return()
 endif()
@@ -78,12 +78,12 @@ endif()
 # what is expected.
 #
 if (CUDA_FOUND)
-  set(CUTLASS_GPU_LANG "CUDA")
+  set(VLLM_GPU_LANG "CUDA")
 
-#  if (NOT Torch_VERSION VERSION_EQUAL ${TORCH_SUPPORTED_VERSION_CUDA})
-#    message(WARNING "Pytorch version ${TORCH_SUPPORTED_VERSION_CUDA} "
-#      "expected for CUDA build, saw ${Torch_VERSION} instead.")
-#  endif()
+  if (NOT Torch_VERSION VERSION_EQUAL ${TORCH_SUPPORTED_VERSION_CUDA})
+    message(WARNING "Pytorch version ${TORCH_SUPPORTED_VERSION_CUDA} "
+      "expected for CUDA build, saw ${Torch_VERSION} instead.")
+  endif()
 else()
   message(FATAL_ERROR "Can't find CUDA installation.")
 endif()
@@ -91,24 +91,24 @@ endif()
 #
 # Override the GPU architectures detected by cmake/torch and filter them by
 # the supported versions for the current language.
-# The final set of arches is stored in `CUTLASS_GPU_ARCHES`.
+# The final set of arches is stored in `VLLM_GPU_ARCHES`.
 #
-override_gpu_arches(CUTLASS_GPU_ARCHES
-  ${CUTLASS_GPU_LANG}
-  "${${CUTLASS_GPU_LANG}_SUPPORTED_ARCHS}")
+override_gpu_arches(VLLM_GPU_ARCHES
+  ${VLLM_GPU_LANG}
+  "${${VLLM_GPU_LANG}_SUPPORTED_ARCHS}")
 
 #
 # Query torch for additional GPU compilation flags for the given
-# `CUTLASS_GPU_LANG`.
-# The final set of arches is stored in `CUTLASS_GPU_FLAGS`.
+# `VLLM_GPU_LANG`.
+# The final set of arches is stored in `VLLM_GPU_FLAGS`.
 #
-get_torch_gpu_compiler_flags(CUTLASS_GPU_FLAGS ${CUTLASS_GPU_LANG})
+get_torch_gpu_compiler_flags(VLLM_GPU_FLAGS ${VLLM_GPU_LANG})
 
 #
 # Set nvcc parallelism.
 #
-if(NVCC_THREADS AND CUTLASS_GPU_LANG STREQUAL "CUDA")
-  list(APPEND CUTLASS_GPU_FLAGS "--threads=${NVCC_THREADS}")
+if(NVCC_THREADS AND VLLM_GPU_LANG STREQUAL "CUDA")
+  list(APPEND VLLM_GPU_FLAGS "--threads=${NVCC_THREADS}")
 endif()
 
 #
@@ -170,82 +170,15 @@ endif()
 define_gpu_extension_target(
   _C
   DESTINATION vllm
-  LANGUAGE ${CUTLASS_GPU_LANG}
+  LANGUAGE ${VLLM_GPU_LANG}
   SOURCES ${VLLM_EXT_SRC}
-  COMPILE_FLAGS ${CUTLASS_GPU_FLAGS}
-  ARCHITECTURES ${CUTLASS_GPU_ARCHES}
+  COMPILE_FLAGS ${VLLM_GPU_FLAGS}
+  ARCHITECTURES ${VLLM_GPU_ARCHES}
   INCLUDE_DIRECTORIES ${CUTLASS_INCLUDE_DIR};${CUTLASS_TOOLS_UTIL_INCLUDE_DIR}
   USE_SABI 3
   WITH_SOABI)
 
-#
-# _moe_C extension
-#
 
-set(VLLM_MOE_EXT_SRC
-  "csrc/moe/torch_bindings.cpp"
-  "csrc/moe/topk_softmax_kernels.cu")
-
-define_gpu_extension_target(
-  _moe_C
-  DESTINATION vllm
-  LANGUAGE ${CUTLASS_GPU_LANG}
-  SOURCES ${VLLM_MOE_EXT_SRC}
-  COMPILE_FLAGS ${CUTLASS_GPU_FLAGS}
-  ARCHITECTURES ${CUTLASS_GPU_ARCHES}
-  USE_SABI 3
-  WITH_SOABI)
-
-#
-# _punica_C extension
-#
-
-set(VLLM_PUNICA_EXT_SRC
-  "csrc/punica/bgmv/bgmv_bf16_bf16_bf16.cu"
-  "csrc/punica/bgmv/bgmv_bf16_fp32_bf16.cu"
-  "csrc/punica/bgmv/bgmv_fp16_fp16_fp16.cu"
-  "csrc/punica/bgmv/bgmv_fp16_fp32_fp16.cu"
-  "csrc/punica/bgmv/bgmv_fp32_bf16_bf16.cu"
-  "csrc/punica/bgmv/bgmv_fp32_fp16_fp16.cu"
-  "csrc/punica/punica_ops.cu"
-  "csrc/punica/torch_bindings.cpp")
-
-#
-# Copy GPU compilation flags+update for punica
-#
-set(VLLM_PUNICA_GPU_FLAGS ${CUTLASS_GPU_FLAGS})
-list(REMOVE_ITEM VLLM_PUNICA_GPU_FLAGS
-  "-D__CUDA_NO_HALF_OPERATORS__"
-  "-D__CUDA_NO_HALF_CONVERSIONS__"
-  "-D__CUDA_NO_BFLOAT16_CONVERSIONS__"
-  "-D__CUDA_NO_HALF2_OPERATORS__")
-
-#
-# Filter out CUDA architectures < 8.0 for punica.
-#
-set(VLLM_PUNICA_GPU_ARCHES)
-foreach(ARCH ${CUTLASS_GPU_ARCHES})
-  string_to_ver(CODE_VER ${ARCH})
-  if (CODE_VER GREATER_EQUAL 8.0)
-    list(APPEND VLLM_PUNICA_GPU_ARCHES ${ARCH})
-  endif()
-endforeach()
-message(STATUS "Punica target arches: ${VLLM_PUNICA_GPU_ARCHES}")
-
-if (VLLM_PUNICA_GPU_ARCHES)
-  define_gpu_extension_target(
-    _punica_C
-    DESTINATION vllm
-    LANGUAGE ${CUTLASS_GPU_LANG}
-    SOURCES ${VLLM_PUNICA_EXT_SRC}
-    COMPILE_FLAGS ${VLLM_PUNICA_GPU_FLAGS}
-    ARCHITECTURES ${VLLM_PUNICA_GPU_ARCHES}
-    USE_SABI 3
-    WITH_SOABI)
-else()
-  message(WARNING "Unable to create _punica_C target because none of the "
-    "requested architectures (${CUTLASS_GPU_ARCHES}) are supported, i.e. >= 8.0")
-endif()
 
 #
 # Add the `default` target which detects which extensions should be
@@ -257,7 +190,7 @@ endif()
 # of which extensions are supported has been factored in, e.g.
 #
 # mkdir build && cd build
-# cmake -G Ninja -DCUTLASS_PYTHON_EXECUTABLE=`which python3` -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=../vllm ..
+# cmake -G Ninja -DVLLM_PYTHON_EXECUTABLE=`which python3` -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=../vllm ..
 # cmake --build . --target default
 #
 add_custom_target(default)
@@ -265,14 +198,5 @@ add_custom_target(default)
 message(STATUS "Enabling C extension.")
 add_dependencies(default _C)
 
-message(STATUS "Enabling moe extension.")
-add_dependencies(default _moe_C)
-
-# Enable punica if -DVLLM_INSTALL_PUNICA_KERNELS=ON or
-# VLLM_INSTALL_PUNICA_KERNELS is set in the environment and
-# there are supported target arches.
-if (VLLM_PUNICA_GPU_ARCHES AND
-    (ENV{VLLM_INSTALL_PUNICA_KERNELS} OR VLLM_INSTALL_PUNICA_KERNELS))
-  message(STATUS "Enabling punica extension.")
-  add_dependencies(default _punica_C)
-endif()
+#message(STATUS "Enabling moe extension.")
+#add_dependencies(default _moe_C)
