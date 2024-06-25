@@ -195,7 +195,7 @@ class cmake_build_ext(build_ext):
             self.configure(ext)
             targets.append(remove_prefix(ext.name, "vllm."))
         print(f"{targets=}")
-        assert False, "good"
+        #assert False, "good"
         num_jobs, _ = self.compute_num_jobs()
 
         build_args = [
